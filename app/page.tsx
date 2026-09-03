@@ -37,6 +37,7 @@ export default function Home() {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<{ text: string; items: FollowUp[] } | null>(null);
   const [listening, setListening] = useState(false);
+  const [editing, setEditing] = useState<FollowUp | null>(null);
   const [greeting, setGreeting] = useState('Welcome back');
   const [todayLabel, setTodayLabel] = useState('Your daily briefing');
 
@@ -89,7 +90,7 @@ export default function Home() {
     if (!capture.trim()) return;
     setParsing(true);
     try {
-      const response = await fetch('/api/parse', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: capture, source }) });
+      const response = await fetch('/api/parse', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: capture, source, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
       if (!response.ok) throw new Error('Could not interpret follow-up');
       setDraft(await response.json());
     } catch { setMessage('I could not interpret that. Try a shorter phrase.'); }
@@ -109,11 +110,12 @@ export default function Home() {
     finally { setSaving(false); }
   }
 
-  async function updateItem(id: string, patch: Record<string, string>) {
+  async function updateItem(id: string, patch: Record<string, string | null>) {
     const response = await fetch(`/api/followups/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) });
-    if (!response.ok) { setMessage('That change could not be saved.'); return; }
+    if (!response.ok) { setMessage('That change could not be saved.'); return false; }
     const updated = await response.json();
     setItems((current) => current.map((item) => item.id === id ? updated : item));
+    return true;
   }
 
   function snooze(item: FollowUp) {
@@ -187,7 +189,7 @@ export default function Home() {
           <section>
             <div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2.5"><h2 className="text-lg font-semibold tracking-[-0.025em]">{title}</h2><Badge variant="secondary" className="bg-secondary text-muted-foreground">{visibleItems.length}</Badge></div>{filter !== 'ALL' && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setFilter('ALL')}>View all</Button>}</div>
             <div className="overflow-hidden rounded-[18px] border bg-card">
-              {loading ? <div className="grid min-h-40 place-items-center text-sm text-muted-foreground"><LoaderCircle className="mb-2 animate-spin" />Loading your cockpit…</div> : visibleItems.length ? visibleItems.map((item, index) => <FollowUpRow key={item.id} item={item} last={index === visibleItems.length - 1} onSnooze={() => snooze(item)} onAdvance={() => advance(item)} onChase={() => { void updateItem(item.id, { action: 'CHASED' }); setMessage(`Chase recorded for ${item.actionOwner}.`); }} />) : <EmptyState filter={filter} />}
+              {loading ? <div className="grid min-h-40 place-items-center text-sm text-muted-foreground"><LoaderCircle className="mb-2 animate-spin" />Loading your cockpit…</div> : visibleItems.length ? visibleItems.map((item, index) => <FollowUpRow key={item.id} item={item} last={index === visibleItems.length - 1} onSnooze={() => snooze(item)} onAdvance={() => advance(item)} onEdit={() => setEditing(item)} onChase={() => { void updateItem(item.id, { action: 'CHASED' }); setMessage(`Chase recorded for ${item.actionOwner}.`); }} />) : <EmptyState filter={filter} />}
             </div>
           </section>
         </section>
@@ -195,6 +197,7 @@ export default function Home() {
 
       {message && <output aria-live="polite" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-foreground px-4 py-3 text-sm font-medium text-background shadow-xl">{message}</output>}
       <AssistantDialog open={assistantOpen} setOpen={setAssistantOpen} question={question} setQuestion={setQuestion} answer={answer} ask={askAssistant} />
+      {editing && <EditDialog key={editing.id} item={editing} onClose={() => setEditing(null)} onSave={async (patch) => { const saved = await updateItem(editing.id, patch); if (saved) { setEditing(null); setMessage('Follow-up updated.'); } }} />}
     </main>
   );
 }
@@ -215,11 +218,23 @@ function CaptureConfirmation({ draft, setDraft, onCancel, onSave, saving }: { dr
 
 function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) { return <label className={wide ? 'sm:col-span-2' : ''}><span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{label}</span>{children}</label>; }
 
-function FollowUpRow({ item, last, onSnooze, onAdvance, onChase }: { item: FollowUp; last: boolean; onSnooze: () => void; onAdvance: () => void; onChase: () => void }) {
+function FollowUpRow({ item, last, onSnooze, onAdvance, onChase, onEdit }: { item: FollowUp; last: boolean; onSnooze: () => void; onAdvance: () => void; onChase: () => void; onEdit: () => void }) {
   const overdue = item.status !== 'DONE' && new Date(item.followUpAt) < new Date(new Date().setHours(0, 0, 0, 0));
   const tone = overdue ? 'urgent' : item.status === 'WAITING' ? 'waiting' : 'today';
   const Icon = overdue ? Clock3 : item.status === 'WAITING' ? UserRound : CalendarClock;
-  return <article className={`group grid gap-3 p-4 transition-colors hover:bg-secondary/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-5 ${last ? '' : 'border-b'}`}><div className={`status-icon ${tone}`}><Icon className="size-4" /></div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className={`truncate text-sm font-semibold tracking-[-0.01em] ${item.status === 'DONE' ? 'text-muted-foreground line-through' : ''}`}>{item.description}</h3>{item.accountName && <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{item.accountName}</span>}{item.priority === 'HIGH' && <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--danger)]">High</span>}</div><div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-medium text-foreground/75">{item.actionOwner}</span><span aria-hidden="true">·</span><span className={overdue ? 'font-semibold text-[var(--danger)]' : ''}>{relativeDate(item.followUpAt)}</span>{item.notes && <><span aria-hidden="true">·</span><span className="max-w-lg truncate">{item.notes}</span></>}</div></div><div className="flex items-center gap-1 justify-self-end">{item.status === 'WAITING' && <Button variant="ghost" size="sm" className="rounded-lg" onClick={onChase}><Send /> Chased</Button>} {item.status !== 'DONE' && <><Button variant="outline" size="sm" className="rounded-lg" onClick={onSnooze}><Clock3 /> Snooze</Button><Button variant="ghost" size="icon-sm" aria-label={item.status === 'WAITING' && item.customerContact ? 'Move to customer follow-up' : 'Mark done'} onClick={onAdvance}><Check /></Button></>}<Button variant="ghost" size="icon-sm" aria-label="More actions"><MoreHorizontal /></Button></div></article>;
+  return <article className={`group grid gap-3 p-4 transition-colors hover:bg-secondary/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-5 ${last ? '' : 'border-b'}`}><div className={`status-icon ${tone}`}><Icon className="size-4" /></div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className={`truncate text-sm font-semibold tracking-[-0.01em] ${item.status === 'DONE' ? 'text-muted-foreground line-through' : ''}`}>{item.description}</h3>{item.accountName && <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{item.accountName}</span>}{item.priority === 'HIGH' && <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--danger)]">High</span>}</div><div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-medium text-foreground/75">{item.actionOwner}</span><span aria-hidden="true">·</span><span className={overdue ? 'font-semibold text-[var(--danger)]' : ''}>{relativeDate(item.followUpAt)}</span>{item.notes && <><span aria-hidden="true">·</span><span className="max-w-lg truncate">{item.notes}</span></>}</div></div><div className="flex items-center gap-1 justify-self-end">{item.status === 'WAITING' && <Button variant="ghost" size="sm" className="rounded-lg" onClick={onChase}><Send /> Chased</Button>} {item.status !== 'DONE' && <><Button variant="outline" size="sm" className="rounded-lg" onClick={onSnooze}><Clock3 /> Snooze</Button><Button variant="ghost" size="icon-sm" aria-label={item.status === 'WAITING' && item.customerContact ? 'Move to customer follow-up' : 'Mark done'} onClick={onAdvance}><Check /></Button></>}<Button variant="ghost" size="icon-sm" aria-label="Edit follow-up" onClick={onEdit}><MoreHorizontal /></Button></div></article>;
+}
+
+function EditDialog({ item, onClose, onSave }: { item: FollowUp; onClose: () => void; onSave: (patch: Record<string, string | null>) => Promise<void> }) {
+  const [form, setForm] = useState({ ...item });
+  const [saving, setSaving] = useState(false);
+  const localDate = toLocalDateTime(form.followUpAt);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setSaving(true);
+    await onSave({ description: form.description, status: form.status, accountName: form.accountName, actionOwner: form.actionOwner, customerContact: form.customerContact, nextAction: form.nextAction, followUpAt: form.followUpAt, priority: form.priority, customerImpact: form.customerImpact, source: form.source, sourceUrl: form.sourceUrl, notes: form.notes });
+    setSaving(false);
+  }
+  return <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-foreground/15 p-4 backdrop-blur-sm" role="presentation" onMouseDown={onClose}><form onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="edit-title" className="my-6 w-full max-w-2xl rounded-2xl bg-popover p-5 text-popover-foreground shadow-2xl ring-1 ring-foreground/10" onMouseDown={(event) => event.stopPropagation()}><div className="mb-5 flex items-start justify-between"><div><h2 id="edit-title" className="text-lg font-semibold">Edit follow-up</h2><p className="mt-1 text-sm text-muted-foreground">Update any detail or change when this should return to your attention.</p></div><Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close"><X /></Button></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Follow-up" wide><Input required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field><Field label="Status"><select className="field-control" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as Status })}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="Priority"><select className="field-control" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}><option value="LOW">Low</option><option value="NORMAL">Normal</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></Field><Field label="Action owner"><Input value={form.actionOwner} onChange={(e) => setForm({ ...form, actionOwner: e.target.value })} /></Field><Field label="Account"><Input value={form.accountName ?? ''} onChange={(e) => setForm({ ...form, accountName: e.target.value || null })} /></Field><Field label="Customer contact"><Input value={form.customerContact ?? ''} onChange={(e) => setForm({ ...form, customerContact: e.target.value || null })} /></Field><Field label="Reminder"><Input type="datetime-local" value={localDate} onChange={(e) => setForm({ ...form, followUpAt: new Date(e.target.value).toISOString() })} /></Field><Field label="Next action" wide><Input value={form.nextAction ?? ''} onChange={(e) => setForm({ ...form, nextAction: e.target.value || null })} /></Field><Field label="Notes" wide><Textarea value={form.notes ?? ''} className="min-h-24" onChange={(e) => setForm({ ...form, notes: e.target.value || null })} /></Field></div><div className="mt-5 flex justify-end gap-2 border-t pt-4"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" disabled={saving}>{saving ? <LoaderCircle className="animate-spin" /> : <Check />} Save changes</Button></div></form></div>;
 }
 
 function AssistantDialog({ open, setOpen, question, setQuestion, answer, ask }: { open: boolean; setOpen: (open: boolean) => void; question: string; setQuestion: (value: string) => void; answer: { text: string; items: FollowUp[] } | null; ask: (prompt?: string) => void }) {
@@ -231,6 +246,7 @@ function AssistantDialog({ open, setOpen, question, setQuestion, answer, ask }: 
 function EmptyState({ filter }: { filter: Filter }) { return <div className="grid min-h-44 place-items-center p-6 text-center"><div><div className="mx-auto mb-3 grid size-10 place-items-center rounded-full bg-accent text-accent-foreground"><Check className="size-5" /></div><p className="text-sm font-semibold">Nothing needs attention here</p><p className="mt-1 text-xs text-muted-foreground">{filter === 'DONE' ? 'Completed follow-ups will appear here.' : 'Your cockpit is clear for this view.'}</p></div></div>; }
 
 function relativeDate(value: string) { const date = new Date(value); const today = new Date(); const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()); const target = new Date(date.getFullYear(), date.getMonth(), date.getDate()); const days = Math.round((target.getTime() - start.getTime()) / 86400000); if (days < -1) return `${Math.abs(days)} days overdue`; if (days === -1) return 'Yesterday'; if (days === 0) return `Today at ${new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(date)}`; if (days === 1) return 'Tomorrow'; return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(date); }
+function toLocalDateTime(value: string) { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 function attentionScore(item: FollowUp) { if (item.status === 'DONE') return -100; const daysOverdue = Math.max(0, Math.floor((Date.now() - new Date(item.followUpAt).getTime()) / 86400000)); return daysOverdue * 10 + (item.customerImpact === 'HIGH' ? 25 : 0) + (item.priority === 'CRITICAL' ? 30 : item.priority === 'HIGH' ? 15 : 0) + item.snoozeCount * 7 + (item.status === 'CUSTOMER_FOLLOW_UP' ? 12 : 0); }
 function oldestDays(items: FollowUp[]) { return Math.max(0, ...items.map((item) => Math.floor((Date.now() - new Date(item.createdAt).getTime()) / 86400000))); }
 function capitalize(value: string) { return value.charAt(0) + value.slice(1).toLowerCase(); }
