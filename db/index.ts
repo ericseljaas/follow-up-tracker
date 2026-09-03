@@ -40,5 +40,10 @@ export async function ensureSchema() {
       created_at TEXT NOT NULL
     )`),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_activities_follow_up ON activities(follow_up_id, created_at)'),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_state (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`),
   ]);
 }

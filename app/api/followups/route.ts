@@ -1,33 +1,33 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import { ensureSchema, getDb } from '@/db';
-import { activities, followUps, type NewFollowUp } from '@/db/schema';
+import { activities, appState, followUps, type NewFollowUp } from '@/db/schema';
 
 export const runtime = 'edge';
 
-function atOffset(days: number, hour = 15) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  date.setHours(hour, 0, 0, 0);
-  return date.toISOString();
-}
+const placeholderDescriptions = [
+  'Get engineering answer on Acme upload failures',
+  'Send revised expansion proposal to Northstar',
+  'Confirm CDL expansion timeline',
+  'Reply with security questionnaire timeline',
+];
 
-async function seedIfEmpty() {
+async function clearPlaceholderDataOnce() {
   const db = getDb();
-  const existing = await db.select({ id: followUps.id }).from(followUps).limit(1);
-  if (existing.length) return;
+  const [completed] = await db.select().from(appState).where(eq(appState.key, 'placeholder_cleanup_v1'));
+  if (completed) return;
   const now = new Date().toISOString();
-  const seeds: NewFollowUp[] = [
-    { id: crypto.randomUUID(), description: 'Get engineering answer on Acme upload failures', status: 'WAITING', accountName: 'Acme', actionOwner: 'Amanda Chen', customerContact: 'Mike', nextAction: 'Update Mike at Acme', followUpAt: atOffset(-2), priority: 'HIGH', customerImpact: 'HIGH', source: 'MEETING', notes: 'Blocking an update to Mike at Acme', createdAt: atOffset(-6), updatedAt: now },
-    { id: crypto.randomUUID(), description: 'Send revised expansion proposal to Northstar', status: 'MY_ACTION', accountName: 'Northstar', actionOwner: 'Me', customerContact: 'Rachel', nextAction: 'Send revised proposal', followUpAt: atOffset(0, 16), priority: 'HIGH', customerImpact: 'HIGH', source: 'EMAIL', notes: 'Customer asked for revised terms on Monday', createdAt: atOffset(-3), updatedAt: now },
-    { id: crypto.randomUUID(), description: 'Confirm CDL expansion timeline', status: 'WAITING', accountName: 'CDL', actionOwner: 'Keith Morgan', nextAction: 'Review expansion timing', followUpAt: atOffset(0, 15), priority: 'NORMAL', customerImpact: 'MEDIUM', source: 'CALL', notes: 'Waiting since yesterday’s pipeline review', createdAt: atOffset(-1), updatedAt: now },
-    { id: crypto.randomUUID(), description: 'Reply with security questionnaire timeline', status: 'CUSTOMER_FOLLOW_UP', accountName: 'Summit Health', actionOwner: 'Me', customerContact: 'Priya', nextAction: 'Email Priya with the confirmed timeline', followUpAt: atOffset(1, 10), priority: 'NORMAL', customerImpact: 'MEDIUM', source: 'SLACK', createdAt: atOffset(-2), updatedAt: now },
-  ];
-  await db.insert(followUps).values(seeds);
+  const placeholders = await db.select({ id: followUps.id }).from(followUps).where(inArray(followUps.description, placeholderDescriptions));
+  if (placeholders.length) {
+    const ids = placeholders.map((item) => item.id);
+    await db.delete(activities).where(inArray(activities.followUpId, ids));
+    await db.delete(followUps).where(inArray(followUps.id, ids));
+  }
+  await db.insert(appState).values({ key: 'placeholder_cleanup_v1', value: 'completed', updatedAt: now });
 }
 
 export async function GET() {
   await ensureSchema();
-  await seedIfEmpty();
+  await clearPlaceholderDataOnce();
   return Response.json(await getDb().select().from(followUps).orderBy(asc(followUps.followUpAt)));
 }
 

@@ -32,5 +32,11 @@ export const activities = sqliteTable('activities', {
   createdAt: text('created_at').notNull(),
 }, (table) => [index('idx_activities_follow_up').on(table.followUpId, table.createdAt)]);
 
+export const appState = sqliteTable('app_state', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export type FollowUp = typeof followUps.$inferSelect;
 export type NewFollowUp = typeof followUps.$inferInsert;
