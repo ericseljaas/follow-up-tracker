@@ -82,7 +82,7 @@ export default function Home() {
     if (filter === 'WAITING' || filter === 'CUSTOMER_FOLLOW_UP' || filter === 'DONE') list = items.filter((item) => item.status === filter);
     if (filter === 'UPCOMING') list = items.filter((item) => item.status !== 'DONE' && new Date(item.followUpAt) >= end);
     if (filter === 'FRIDAY') list = items.filter((item) => item.status !== 'DONE' && (item.snoozeCount > 0 || Date.now() - new Date(item.updatedAt).getTime() > 7 * 86400000 || item.customerImpact === 'HIGH'));
-    if (filter === 'ALL') list = items;
+    if (filter === 'ALL') list = items.filter((item) => item.status !== 'DONE');
     return [...list].sort((a, b) => attentionScore(b) - attentionScore(a));
   }, [items, filter]);
 
